@@ -1,0 +1,70 @@
+{
+  "name": "continuous-wasteland",
+  "private": true,
+  "license": "WTFPL",
+  "scripts": {
+    "start": "npx mint dev",
+    "start:no-open": "mint dev --no-open",
+    "check:openapi": "echo 'Not needed here'",
+    "check:links": "mint broken-links",
+    "check:redirects": "node scripts/check-redirects.mjs unique exist",
+    "check:navigation": "node scripts/check-navigation.mjs",
+    "check:fs": "echo 'TODO'",
+    "check:fmt": "remark . -e mdx,md --no-stdout --quiet --frail",
+    "check:spell": "cspell --no-progress --show-suggestions .",
+    "check:all": "npm run check:openapi && npm run check:links && npm run check:redirects && npm run check:fs && npm run check:fmt && npm run check:spell",
+    "fmt": "remark . -e mdx,md -o --silent",
+    "fmt:some": "remark -o --silent --silently-ignore",
+    "use-fmt-some-command-in-ci-and-suggest-it-too": "",
+    "spell": "cspell lint --no-progress --show-suggestions .",
+    "spell:some": "cspell lint",
+    "lint:all": "npm run check:all",
+    "link:pre-push": "echo 'TODO'",
+    "prepare": "husky"
+  },
+  "dependencies": {
+    "cspell": "^9.2.1",
+    "husky": "^9.1.7",
+    "mint": "^4.2.186",
+    "remark": "^15.0.1",
+    "remark-cli": "^12.0.1",
+    "remark-frontmatter": "^5.0.0",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
+    "remark-mdx": "^3.1.1",
+    "unified-consistency": "^2.0.0",
+    "unist-util-visit-parents": "^6.0.2"
+  },
+  "moveConfigToReuseAsRemarkrcMjs": true,
+  "remarkConfig": {
+    "plugins": [
+      "remark-frontmatter",
+      "remark-math",
+      [
+        "remark-gfm",
+        {
+          "singleTilde": false
+        }
+      ],
+      [
+        "remark-mdx",
+        {
+          "printWidth": 20
+        }
+      ],
+      "unified-consistency"
+    ],
+    "settings": {
+      "bullet": "-",
+      "emphasis": "_",
+      "rule": "-",
+      "incrementListMarker": false,
+      "tightDefinitions": true
+    }
+  },
+  "engines": {
+    "node": ">=20.17",
+    "npm": ">=9"
+  },
+  "packageManager": "npm@9.9.4"
+}

@@ -1,0 +1,8 @@
+# Ignore folders
+node_modules/
+
+# Ignore some root files
+/LICENSE*
+
+# Ignore generated files and directories
+# ...none at the moment...

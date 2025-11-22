@@ -1,0 +1,155 @@
+name: 🚪 Supervisor
+# aka 🏀 Bouncer
+
+env:
+  # additions only
+  MAX_ADDITIONS_FORKS: 500
+  # on rare occasions, when maintainers need to edit a lot of things at once
+  MAX_ADDITIONS_DIRECT_BRANCHES: 1000
+  # the name of this workflow file wrapped in backticks
+  MSG_PREFIX: "`bouncer.yml`"
+
+on:
+  pull_request_target: # do NOT use actions/checkout
+    branches: ["**"] # any branches
+    types: [opened, synchronize] # on creation and on new commits
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-bouncer
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  supervise-requests:
+    name: "Pull requests"
+    env:
+      MAX_ADDITIONS: >
+        ${{ (github.event.pull_request.head.repo.fork == true || github.event.pull_request.head.repo.full_name != github.repository) && env.MAX_ADDITIONS_FORKS || env.MAX_ADDITIONS_DIRECT_BRANCHES }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get PR stats, such as number of additions and deletions modulo filtered files
+        id: stats
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          # This JavaScript code cannot be moved to a separate file because
+          # this workflow must NOT checkout the repository for security reasons
+          #
+          # The same note applies to all JS code in this file
+          script: |
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+            console.log(files);
+            const filtered = files.filter(f => ![
+              // TODO: filter the folders too.
+              //       .github/scripts
+              //       scripts/
+              //       snippets/
+              'package-lock.json',
+              'v2.json', // with prefix?
+              'v3.yaml', // with prefix?
+              'smc-index.json', // with prefix?
+              'instructions.mdx', // tvm/instructions.mdx?
+            ].includes(f.filename));
+            const additions = filtered.reduce((acc, it) => acc + it.additions, 0);
+            const deletions = filtered.reduce((acc, it) => acc + it.deletions, 0);
+            core.setOutput('additions', additions);
+            core.setOutput('deletions', deletions);
+            console.log(additions, deletions);
+
+      - name: An opened PR is too big to be reviewed at once
+        if: github.event.action == 'opened' && steps.stats.outputs.additions > env.MAX_ADDITIONS
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: [
+                '${{ env.MSG_PREFIX }}:',
+                'Thank you for the contribution!',
+                [
+                  'Unfortunately, it is too large and has over ${{ env.MAX_ADDITIONS }} added lines,',
+                  'excluding some generated or otherwise special files, which makes it tough to review and iterate on.',
+                  'Please, split the PR into several smaller ones and consider:',
+                  'reverting possible unrelated changes, writing less, or approaching the problem in the issue from a different angle.',
+                ].join(' '),
+                'I will close this PR and will be looking forward to your next submissions. If there is a mistake and you still intend to proceed, do reopen it.',
+              ].join('\n\n'),
+            });
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              // This is fun
+              state: 'closed',
+            });
+            process.exit(1);
+
+      - name: Any change in the PR made it too big
+        if: github.event.action == 'synchronize' && steps.stats.outputs.additions > env.MAX_ADDITIONS
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+            });
+            for (const comment of comments.data) {
+                const isHidden = (await github.graphql(`
+                  query($nodeId: ID!) {
+                    node(id: $nodeId) {
+                      ... on IssueComment {
+                        isMinimized
+                      }
+                    }
+                  }
+                `, { nodeId: comment.node_id }))?.node?.isMinimized;
+                await exec.exec('sleep 0.5s');
+                if (isHidden) { continue; }
+                if (
+                  comment.user.login === 'github-actions[bot]' &&
+                  comment.body.startsWith('${{ env.MSG_PREFIX }}')
+                ) {
+                  console.log('Comment node_id:', comment.node_id);
+                  console.log(await github.graphql(`
+                    mutation($subjectId: ID!, $classifier: ReportedContentClassifiers!) {
+                      minimizeComment(input: {
+                        subjectId: $subjectId,
+                        classifier: $classifier
+                      }) {
+                        minimizedComment {
+                          isMinimized
+                          minimizedReason
+                        }
+                      }
+                    }
+                  `, {
+                    subjectId: comment.node_id,
+                    classifier: success ? 'RESOLVED' : 'OUTDATED',
+                  }));
+                  await exec.exec('sleep 0.5s');
+                }
+              }
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: [
+                '${{ env.MSG_PREFIX }}:',
+                [
+                  'The most recent commit has made this PR go over ${{ env.MAX_ADDITIONS }} added lines.',
+                  'Please, decrease the size of this PR or consider splitting it into several smaller requests.'
+                ].join(' '),
+                'Until then, the CI will be marked as failed.',
+              ].join('\n\n'),
+            });
+            process.exit(1);
