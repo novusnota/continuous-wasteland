@@ -25,12 +25,23 @@ permissions:
 jobs:
   supervise-requests:
     name: "Pull requests"
-    env:
-      MAX_ADDITIONS: >
-        ${{ (github.event.pull_request.head.repo.fork == true || github.event.pull_request.head.repo.full_name != github.repository) && env.MAX_ADDITIONS_FORKS || env.MAX_ADDITIONS_DIRECT_BRANCHES }}
     runs-on: ubuntu-latest
     steps:
-      - name: Get PR stats, such as number of additions and deletions modulo filtered files
+      - name: Set MAX_ADDITIONS for forks
+        if: |
+          github.event_name == 'pull_request_target' &&
+          github.event.pull_request.head.repo.fork == true ||
+          github.event.pull_request.head.repo.full_name != github.repository
+        run: echo 'MAX_ADDITIONS=${{ env.MAX_ADDITIONS_FORKS }}' >> "$GITHUB_ENV"
+
+      - name: Set MAX_ADDITIONS for direct branches
+        if: |
+          github.event_name != 'pull_request_target' &&
+          github.event.pull_request.head.repo.fork != true ||
+          github.event.pull_request.head.repo.full_name == github.repository
+        run: echo 'MAX_ADDITIONS=${{ env.MAX_ADDITIONS_DIRECT_BRANCHES }}' >> "$GITHUB_ENV"
+
+      - name: Get PR stats, such as number of additions modulo filtered files
         id: stats
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
@@ -39,32 +50,83 @@ jobs:
           #
           # The same note applies to all JS code in this file
           script: |
+            const maxAdditions = Number(process.env.MAX_ADDITIONS ?? '500');
             const { data: files } = await github.rest.pulls.listFiles({
               owner: context.repo.owner,
               repo: context.repo.repo,
               pull_number: context.payload.pull_request.number,
               per_page: 100,
             });
-            console.log(files);
-            const filtered = files.filter(f => ![
-              // TODO: filter the folders too.
-              //       .github/scripts
-              //       scripts/
-              //       snippets/
-              'package-lock.json',
-              'v2.json', // with prefix?
-              'v3.yaml', // with prefix?
-              'smc-index.json', // with prefix?
-              'instructions.mdx', // tvm/instructions.mdx?
-            ].includes(f.filename));
+            // NOTE: remove
+            console.log(
+              files.map((f) => ({ name: f.filename, stat: f.status, add: f.additions, del: f.deletions, chg: f.changes })),
+            );
+            const filtered = files.filter(
+              (f) =>
+                ![
+                  'package-lock.json',
+                  'ecosystem/api/toncenter/v2.json',
+                  'ecosystem/api/toncenter/v3.yaml',
+                  'ecosystem/api/toncenter/smc-index.json',
+                  'tvm/instructions.mdx',
+                ].includes(f.filename) && !f.filename.endsWith('.py'),
+            );
+            // NOTE: consider looking for .changes
             const additions = filtered.reduce((acc, it) => acc + it.additions, 0);
-            const deletions = filtered.reduce((acc, it) => acc + it.deletions, 0);
-            core.setOutput('additions', additions);
-            core.setOutput('deletions', deletions);
-            console.log(additions, deletions);
+            if (additions > maxAdditions) {
+              core.setOutput('trigger', 'true');
+            } else {
+              core.setOutput('trigger', 'false');
+            }
+
+      - name: Remove prior comments regardless of the state
+        if: github.event.action == 'synchronize'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+            });
+            for (const comment of comments.data) {
+                const isHidden = (await github.graphql(`
+                  query($nodeId: ID!) {
+                    node(id: $nodeId) {
+                      ... on IssueComment {
+                        isMinimized
+                      }
+                    }
+                  }
+                `, { nodeId: comment.node_id }))?.node?.isMinimized;
+                await exec.exec('sleep 0.5s');
+                if (isHidden) { continue; }
+                if (
+                  comment.user.login === 'github-actions[bot]' &&
+                  comment.body.startsWith('${{ env.MSG_PREFIX }}')
+                ) {
+                  console.log('Comment node_id:', comment.node_id);
+                  console.log(await github.graphql(`
+                    mutation($subjectId: ID!) {
+                      minimizeComment(input: {
+                        subjectId: $subjectId,
+                        classifier: OUTDATED
+                      }) {
+                        minimizedComment {
+                          isMinimized
+                          minimizedReason
+                        }
+                      }
+                    }
+                  `, {
+                    subjectId: comment.node_id,
+                  }));
+                  await exec.exec('sleep 0.5s');
+                }
+              }
 
       - name: An opened PR is too big to be reviewed at once
-        if: github.event.action == 'opened' && steps.stats.outputs.additions > env.MAX_ADDITIONS
+        if: github.event.action == 'opened' && steps.stats.outputs.trigger == 'true'
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
@@ -94,51 +156,10 @@ jobs:
             process.exit(1);
 
       - name: Any change in the PR made it too big
-        if: github.event.action == 'synchronize' && steps.stats.outputs.additions > env.MAX_ADDITIONS
+        if: github.event.action == 'synchronize' && steps.stats.outputs.trigger == 'true'
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
-            const comments = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-            });
-            for (const comment of comments.data) {
-                const isHidden = (await github.graphql(`
-                  query($nodeId: ID!) {
-                    node(id: $nodeId) {
-                      ... on IssueComment {
-                        isMinimized
-                      }
-                    }
-                  }
-                `, { nodeId: comment.node_id }))?.node?.isMinimized;
-                await exec.exec('sleep 0.5s');
-                if (isHidden) { continue; }
-                if (
-                  comment.user.login === 'github-actions[bot]' &&
-                  comment.body.startsWith('${{ env.MSG_PREFIX }}')
-                ) {
-                  console.log('Comment node_id:', comment.node_id);
-                  console.log(await github.graphql(`
-                    mutation($subjectId: ID!, $classifier: ReportedContentClassifiers!) {
-                      minimizeComment(input: {
-                        subjectId: $subjectId,
-                        classifier: $classifier
-                      }) {
-                        minimizedComment {
-                          isMinimized
-                          minimizedReason
-                        }
-                      }
-                    }
-                  `, {
-                    subjectId: comment.node_id,
-                    classifier: success ? 'RESOLVED' : 'OUTDATED',
-                  }));
-                  await exec.exec('sleep 0.5s');
-                }
-              }
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
