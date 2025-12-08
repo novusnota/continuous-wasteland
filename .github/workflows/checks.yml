@@ -23,7 +23,7 @@ jobs:
   format-fix:
     name: "Fix formatting"
     runs-on: ubuntu-latest
-    if: github.event.requested_action.identifier == 'btn_fmt'
+    if: github.event.check_run.id == 'btn_fmt'
     steps:
       - name: Checkout PR branch
         uses: actions/checkout@v4
