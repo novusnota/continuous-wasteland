@@ -65,6 +65,11 @@
       "source": "/file1",
       "destination": "/mdx/file1",
       "permanent": true
+    },
+    {
+      "source": "/paper.pdf",
+      "destination": "/resources/pdfs/paper.pdf",
+      "permanent": true
     }
   ]
 }
