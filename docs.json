@@ -2,11 +2,6 @@
   "$schema": "https://mintlify.com/docs.json",
   "theme": "maple",
   "name": "Non-docs docs",
-  "logo": {
-    "light": "/resources/logo/light.svg",
-    "dark": "/resources/logo/dark.svg"
-  },
-  "favicon": "/favicon.png",
   "colors": {
     "primary": "#0098EA",
     "light": "#F7F9FB",
@@ -20,8 +15,7 @@
     "strict": false
   },
   "thumbnails": {
-    "appearance": "dark",
-    "background": "/resources/logo/og-image-bg.svg"
+    "appearance": "dark"
   },
   "styling": {
     "eyebrows": "breadcrumbs"
