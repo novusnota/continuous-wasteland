@@ -7,7 +7,8 @@ env:
 
 on:
   check_run:
-    types: [requested_action]
+    types: [completed]
+    # types: [requested_action]
     # NOTE: created? then close?
 
 concurrency:
@@ -22,12 +23,7 @@ jobs:
   format-fix:
     name: "Fix formatting"
     runs-on: ubuntu-latest
-    if: |
-      github.event.requested_action.identifier == 'btn_fmt' &&
-      (
-        github.event.pull_request.head.repo.fork == true ||
-        github.event.pull_request.head.repo.full_name != github.repository
-      )
+    if: github.event.requested_action.identifier == 'btn_fmt'
     steps:
       - name: Checkout PR branch
         uses: actions/checkout@v4
