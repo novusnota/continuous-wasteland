@@ -22,7 +22,6 @@ jobs:
   format-check:
     name: "Formatting"
     runs-on: ubuntu-latest
-    if: false # TODO: edit and re-enable
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -52,17 +51,57 @@ jobs:
         id: check-fmt
         env:
           ALL_CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
-        run: |
-          if [ -z $(echo -e "${ALL_CHANGED_FILES[@]}" | tr -d '[:space:]') ]; then
-            echo -e '\nNo such files affected!'
-            exit 0
-          fi
-          echo -e '\nChecking formatting of the following MDX and Markdown files affected by this PR:\n'
-          for file in ${ALL_CHANGED_FILES}; do
-            echo "- $file"
-          done
-          echo
-          npx remark --no-stdout --quiet --frail --silently-ignore $(echo -e "${ALL_CHANGED_FILES[@]}" | tr '\n' ' ')
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const files = (process.env.ALL_CHANGED_FILES ?? '')
+              .trim().split(' ').filter(Boolean).filter((it) => it.match(/\.mdx?$/) !== null);
+            if (files.length === 0) {
+              console.log('\nNo such files affected!');
+              process.exit(0);
+            }
+            console.log('\nChecking formatting of the following MDX and Markdown files affected by this PR:\n');
+            for (const file of files) {
+              console.log(`- ${file}`);
+            }
+            try {
+              await exec.exec('npm', ['run', 'check:fmt:some', '--', ...files], {
+                silent: true, // >/dev/null 2>&1
+              });
+            } catch (_) {
+              // Comment right in the actions output
+              console.log('\n\x1b[31mError:\x1b[0m Some files are not properly formatted!');
+              console.log('1. Install necessary dependencies: \x1b[31mnpm ci\x1b[0m');
+              console.log(`2. Run this command to fix the issues: \x1b[31mnpm run fmt:some -- ${files.join(' ')}\x1b[0m`);
+
+              // Rethrow the exit code of the failed formatting check
+              core.setFailed('Some files are not properly formatted!');
+              process.exit(1);
+            }
+
+      - name: Create a button to apply formatting fixes in a new commit from the bot
+        if: |
+          (
+            steps.check-fmt.conclusion == 'failure' &&
+            github.event_name == 'pull_request' &&
+            (
+              github.event.pull_request.head.repo.fork == true ||
+              github.event.pull_request.head.repo.full_name != github.repository
+            )
+          )
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+              const { createCheckButton } = await import('${{ github.workspace }}/.github/scripts/common.mjs');
+              await createCheckButton({
+                github,
+                context,
+                exec,
+                checkName = 'A button to apply formatting fixes',
+                btnLabel = 'Fix formatting',
+                btnLabel = 'Applies formatting fixes on the changed files, in a new commit from the bot',
+                btnID = 'btn_fmt',
+              });
 
       # TODO: such comments could be done by either workflow_call or workflow_dispatch and the commenter that works in forks
       # NOTE: try out:
@@ -73,7 +112,7 @@ jobs:
       - name: ${{ steps.check-fmt.conclusion == 'failure' && '👀 How to fix the formatting? See these suggestions!' || '...' }}
         env:
           ALL_CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
-        if: failure()
+        if: false # disabled
         run: |
           # Preparations
           FILES="$(echo -e "${ALL_CHANGED_FILES[@]}" | tr '\n' ' ')"
@@ -88,7 +127,6 @@ jobs:
           # Comment right in the actions output
           echo -e "\nInstall necessary dependencies: \033[31mnpm ci\033[0m"
           echo -e "Then, run this to fix formatting: \033[31mnpx remark -o --silent --silently-ignore ${FILES}\033[0m"
-          # TODO: suggest npm script instead
 
   spell-check:
     name: "Spelling"
